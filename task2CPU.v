@@ -1,4 +1,4 @@
-module task1CPU(//端口定义
+module task2CPU(//端口定义
             CLR,        //CLR
             T3,         //节拍 
             SW,         //控制台信号 3--C 2--B 1--A
@@ -28,12 +28,10 @@ module task1CPU(//端口定义
             LONG,       //三个CPU周期的指令
             SEL         //选择寄存器 3..0
             );
-
 //输入信号
 input               CLR, C, Z, T3;
 input   [3:1]       SW, W;
 input   [7:4]       IR;
-
 //输出信号
 output              DRW, PCINC, LPC, LAR, PCADD, ARINC, SELCTL, MEMW, STOP;
 output				LIR, LDZ, LDC, CIN, M, ABUS, SBUS, MBUS, SHORT, LONG;
@@ -41,6 +39,8 @@ output  [3:0]       S, SEL;
 
 //中间变量
 wire                W_REG, R_REG, W_RAM, R_RAM, G_INS; 
+
+//指令中间变量
 wire                ADD, SUB, AND, INC, LD, ST, JC, JZ, JMP, STP;
 wire                OUT, OR, MOV;
 
@@ -53,7 +53,6 @@ assign              R_REG = (SW == 3'b011);     //读寄存器
 assign              W_RAM = (SW == 3'b001);     //写存储器
 assign              R_RAM = (SW == 3'b010);     //读存储器
 assign              G_INS = (SW == 3'b000);     //取指
-assign				COVER_PC = (SW == 3'b101);  //自定义PC
 
 //指令
 assign              ADD = (IR == 4'b0001) && G_INS && ST0;      //加法
@@ -70,10 +69,7 @@ assign              STP = (IR == 4'b1110) && G_INS && ST0;      //停机
 //额外的添加指令
 assign              OUT = (IR == 4'b1010) && G_INS && ST0;      //输出
 assign 				OR  = (IR == 4'b1011) && G_INS && ST0;		//逻辑或
-assign 				CMP = (IR == 4'b1010) && G_INS && ST0;      //比较
 assign 				MOV = (IR == 4'b1101) && G_INS && ST0;      //移数
-assign				NOT = (IR == 4'b0000) && G_INS && ST0;      //逻辑非
-assign				NAND= (IR == 4'b1111) && G_INS && ST0;      //逻辑与非
 
 //ST0的状态
 //当按CLR时使ST0置0，保证进行读写存储器时先从读取数据到AR中得到自定义的地址然后循环进行操作。
@@ -82,38 +78,43 @@ assign				NAND= (IR == 4'b1111) && G_INS && ST0;      //逻辑与非
 always @(negedge CLR or negedge T3) begin
 	if(~CLR)
 		ST0 <= 0;
-    else if(~ST0 && ((W_REG && W[2]) || (R_RAM && W[1]) || (W_RAM && W[1]) || (G_INS && W[1])))
+    else if(~ST0 && ((W_REG && W[2]) || (R_RAM && W[1]) || (W_RAM && W[1]) || (G_INS && W[2])))
         ST0 <= 1;
     else if(ST0 && (W_REG && W[2])) 
         ST0 <= 0;
 end
 
-assign              DRW   = W_REG && (W[1] || W[2]) || (ADD || SUB || INC || AND || OR || MOV || NOT || NAND) && W[2] || LD && W[3];
-assign              PCINC = G_INS && W[1];
-assign              LPC   = JMP && W[2] || COVER_PC && W[1];
-assign              LAR   = (R_RAM || W_RAM) && ~ST0 && W[1] || (LD || ST) && W[2];
-assign              PCADD = (JC && C || JZ && Z) && W[2];
+//流水线的取址操作
+assign              LIR   = G_INS && W[2] || (ADD || SUB || AND || OR || INC || MOV || STP || JC && ~C || JZ && ~Z) && W[1];
+assign              PCINC = G_INS && W[2] || (ADD || SUB || AND || OR || INC || MOV || STP || JC && ~C || JZ && ~Z) && W[1];
+
+//节拍修改
+assign              SHORT = (R_RAM || W_RAM || ADD || SUB || AND || OR || INC || MOV || STP || JC && ~C || JZ && ~Z) && W[1];
+assign              LONG  = 0;
+
+assign              DRW   = W_REG && (W[1] || W[2]) || (ADD || SUB || INC || AND || OR || MOV) && W[1] || LD && W[2];
+assign              LPC   = JMP && W[1];
+assign              LAR   = (R_RAM || W_RAM) && ~ST0 && W[1] || (LD || ST) && W[1];
+assign              PCADD = (JC && C || JZ && Z) && W[1];//存疑待修改 可能是ppt上的图片有误
 assign              ARINC = (R_RAM || W_RAM) && ST0 && W[1];
 assign              SELCTL= (R_REG || W_REG) && (W[1] || W[2]);
-assign              MEMW  = ST0 && (W_RAM && W[1] || ST && W[3]);
-assign              STOP  = (R_REG || W_REG) && (W[1] || W[2]) || (R_RAM || W_RAM) && W[1] || STP && W[2] || COVER_PC && W[1];
-assign              LIR   = G_INS && W[1];
-assign              LDZ   = (ADD || SUB || AND || OR || CMP || NOT || NAND) && W[2];
-assign              LDC   = (ADD || SUB || CMP) && W[2];
-assign              CIN   = ADD && W[2];
-assign              S[3]  = (ADD || AND || LD || ST || JMP || OUT || OR || MOV) && W[2] || ST && W[3];
-assign              S[2]  = (SUB || ST || JMP || OR || CMP || NAND) && W[2];
-assign              S[1]  = (SUB || AND || LD || ST || JMP || OUT || OR || CMP || MOV) && W[2] || ST && W[3];
-assign              S[0]  = (ADD || AND || ST || JMP) && W[2];
-assign              M     = (AND || LD || ST || JMP || OUT || OR || MOV || NOT || NAND) && W[2] || ST && W[3];
-assign              ABUS  = (ADD || SUB || AND || INC || LD || ST || JMP || OUT || OR || MOV || NOT || NAND) && W[2] || ST && W[3];
-assign              SBUS  = R_RAM && ~ST0 && W[1] || W_RAM && W[1] || W_REG || COVER_PC && W[1];
-assign              MBUS  = R_RAM && ST0 && W[1] || LD && W[3];
-assign              SHORT = (R_RAM || W_RAM || COVER_PC) && W[1];
-assign              LONG  = (LD || ST) && W[2];
+assign              MEMW  = ST0 && (W_RAM && W[1] || ST && W[2]);
+assign              STOP  = (R_REG || W_REG) && (W[1] || W[2]) || (R_RAM || W_RAM) && W[1] || STP && W[1];
+assign              LDZ   = (ADD || SUB || AND || OR) && W[1];
+assign              LDC   = (ADD || SUB) && W[1];
+assign              CIN   = ADD && W[1];
+assign              S[3]  = (ADD || AND || LD || ST || JMP || OUT || OR || MOV) && W[1] || ST && W[2];
+assign              S[2]  = (SUB || ST || JMP || OR) && W[1];
+assign              S[1]  = (SUB || AND || LD || ST || JMP || OUT || OR) && W[1] || ST && W[2];
+assign              S[0]  = (ADD || AND || ST || JMP) && W[1];
+assign              M     = (AND || LD || ST || JMP || OUT || OR || MOV) && W[1] || ST && W[2];
+assign              ABUS  = (ADD || SUB || AND || INC || LD || ST || JMP || OUT || OR || MOV) && W[1] || ST && W[2];
+assign              SBUS  = R_RAM && ~ST0 && W[1] || W_RAM && W[1] || W_REG;
+assign              MBUS  = R_RAM && ST0 && W[1] || LD && W[2];
 assign              SEL[3]= W_REG && ST0 && (W[1] || W[2]) || R_REG && W[2];
 assign              SEL[2]= W_REG && W[2];
 assign              SEL[1]= W_REG && (~ST0 && W[1] || ST0 && W[2]) || R_REG && W[2];
 assign              SEL[0]= W_REG && W[1] || R_REG && (W[1] || W[2]);
 
 endmodule
+
